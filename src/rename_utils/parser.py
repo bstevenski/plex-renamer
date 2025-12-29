@@ -131,23 +131,46 @@ def _extract_episode_title_from_filename(stem: str) -> Optional[str]:
     Examples:
         "Intervention - s08e11 - Marquel" -> "Marquel"
         "Ghosts - S01E01 - Pilot" -> "Pilot"
+        "The Office - S03E04 - The Coup" -> "The Coup"
     Returns None if no obvious title segment exists.
     """
     s = _normalize_text(stem)
 
-    # Prefer the segment after the sXXeYY token
-    m = re.search(r"[Ss]\d{1,2}[Ee]\d{1,2}\s*-\s*(.+)$", s)
-    if m:
-        candidate = m.group(1).strip(" -_")
-        if candidate and not SEASON_EPISODE_REGEX.search(candidate):
-            return _sanitize_filename(candidate)
+    # Try multiple patterns for episode titles
+    patterns = [
+        # Standard: Show - SXXEYY - Title
+        r"[Ss]\d{1,2}[Ee]\d{1,2}\s*[-_–—]\s*(.+)$",
+        # Show SXXEYY Title (no dash)
+        r"[Ss]\d{1,2}[Ee]\d{1,2}\s+(.+)$",
+        # Title - Show SXXEYY (reversed)
+        r"(.+)\s*[-_–—]\s*[Ss]\d{1,2}[Ee]\d{1,2}$",
+        # Date-based: Show YYYY-MM-DD - Title
+        r".+\s*(\d{4})[-_.]\s*(\d{1,2})[-_.]\s*(\d{1,2})\s*[-_–—]\s*(.+)$",
+        # Simple format: Title SXXEYY
+        r"(.+)\s*[Ss]\d{1,2}[Ee]\d{1,2}$",
+    ]
 
-    # Fallback: last "-" segment, if it doesn't look like tech garbage
+    for pattern in patterns:
+        m = re.search(pattern, s)
+        if m:
+            title_candidate = m.group(1).strip(" -_")
+            # Clean common prefixes/suffixes
+            title_candidate = re.sub(r"^(Part|Pt)\s*\d+", "", title_candidate)
+            title_candidate = re.sub(r"\[.*?]", "", title_candidate)
+            if (
+                    title_candidate
+                    and not SEASON_EPISODE_REGEX.search(title_candidate)
+                    and not QUALITY_FORMATS_REGEX.search(title_candidate)
+            ):
+                return _sanitize_filename(title_candidate)
+
+    # Fallback: try to extract from segments separated by dashes
     parts = [p.strip() for p in s.split(" - ") if p.strip()]
-    if len(parts) >= 2:
-        candidate = parts[-1]
-        if not SEASON_EPISODE_REGEX.search(candidate) and not QUALITY_FORMATS_REGEX.search(candidate):
-            return _sanitize_filename(candidate)
+    for part in parts:
+        if part and not SEASON_EPISODE_REGEX.search(part) and not QUALITY_FORMATS_REGEX.search(part):
+            # Check if this could be a title (not a number, not season/episode pattern)
+            if not re.search(r"^(S\d+E\d+|Season\s+\d+|Episode\s+\d+)", part):
+                return _sanitize_filename(part)
 
     return None
 
@@ -173,18 +196,42 @@ def parse_media_file(filepath: Path) -> dict:
     season, episode = _parse_tv_filename(filename)
 
     if season is not None and episode is not None:
-        # TV Show - prefer using parent directory name as title
-        parent_dir = filepath.parent.name
+        # TV Show - detect directory structure to find proper show name
+        current_path = filepath
+        show_dir = None
 
-        # Check if parent is a season folder - if so, use grandparent
-        parent_is_season = re.match(r"[Ss]eason\s*\d+", parent_dir) or parent_dir.lower().startswith("season ")
+        # Walk up the directory tree to find show folder (not season/episode folder)
+        current = current_path.parent
+        while current and current.name != current.root:
+            # Check if current directory looks like a season/episode folder
+            if (
+                    SEASON_EPISODE_REGEX.search(current.name)
+                    or QUALITY_FORMATS_REGEX.search(current.name)
+                    or re.search(r"\[.*?]", current.name)
+                    or re.search(r"\.(ELiTE|NTb|EZTV)", current.name)
+            ):
+                # Skip this, go up one level
+                current = current.parent
+                continue
 
-        if parent_is_season:
-            # Use grandparent directory (the actual show folder)
-            grandparent_dir = filepath.parent.parent.name if filepath.parent.parent else parent_dir
-            show_dir = grandparent_dir
-        else:
-            show_dir = parent_dir
+            # Check if this might be the show folder
+            # Good indicators: contains "TV Shows" or typical show naming
+            if (
+                    "TV Shows" in str(current.parent)
+                    or not SEASON_EPISODE_REGEX.search(current.name)
+                    and not QUALITY_FORMATS_REGEX.search(current.name)
+                    and not re.search(r"\[.*?]", current.name)
+                    and not re.search(r"\.(ELiTE|NTb|EZTV)", current.name)
+                    and not current.name.lower().startswith("season ")
+            ):
+                show_dir = current.name
+                break
+
+            current = current.parent
+
+        # Fallback to parent directory name if show folder not found
+        if not show_dir:
+            show_dir = filepath.parent.name
 
         # Clean up show directory name (remove things like "(US)" etc.)
         show_title = re.sub(r"\s*\([^)]*\)", "", show_dir).strip()
@@ -206,18 +253,20 @@ def parse_media_file(filepath: Path) -> dict:
                 SEASON_EPISODE_REGEX.search(show_dir)
                 or QUALITY_FORMATS_REGEX.search(show_dir)
                 or re.search(r"\[.*?]", show_dir)  # Brackets
-                or ".to" in show_dir  # Domain-like patterns
-                or re.search(r"\.(ELiTE|NTb|EZTV)", show_dir)  # Release groups
+                or re.search(r"\.ELiTE.*", show_dir)
+                or re.search(r"\.NTb.*", show_dir)
+                or re.search(r"\.EZTV.*", show_dir)
+                or re.search(r"\.1080p.*", show_dir)
+                or re.search(r"\.x265.*", show_dir)
+                or re.search(r"\.S25.", show_dir)  # Season-specific pattern
                 or "S25." in show_dir  # Season-specific pattern
         )
 
         # Use show directory title unless it's clearly a filename pattern or generic
         if show_dir_is_filename or show_title.lower() in ["tv shows", "season", "episodes"]:
-            title, year = _guess_title_and_year_from_stem(stem)
+            title, year = _guess_title_and_year_from_stem(show_dir)  # Treat as potential filename
         else:
-            title = show_title
-            # Try to extract year from filename since show dir might not have it
-            _, year = _guess_title_and_year_from_stem(stem)
+            title, year = show_title, None  # Use directory name as title
 
         episode_title = _extract_episode_title_from_filename(stem)
         date_str, date_year = _parse_date_in_filename(filename)

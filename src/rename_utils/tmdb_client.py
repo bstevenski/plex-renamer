@@ -136,8 +136,37 @@ class TMDbClient:
         logger.debug(f"Getting TV show details for ID: {tmdb_id}")
         return self._make_request(f"tv/{tmdb_id}")
 
-    def get_tv_episode_details(self, tmdb_id: int, season_number: int, episode_number: int) -> Dict[str, Any]:
+    def get_tv_episode_details(self, tmdb_id: int, season_number: int, episode_number: int,
+                               episode_title: Optional[str] = "") -> Dict[str, Any]:
         """Get detailed information for a specific TV episode."""
+        if episode_title != "":
+            logger.debug(f"Getting episode details for show ID {tmdb_id} with title '{episode_title}'")
+            # Search for episode by title within the season
+            season_data = self._make_request(f"tv/{tmdb_id}/season/{season_number}")
+            episodes = season_data.get("episodes", [])
+            for episode in episodes:
+                if episode.get("name", "").lower() == episode_title.lower():
+                    episode_number = episode.get("episode_number")
+                    logger.debug(f"Found episode '{episode_title}' as S{season_number}E{episode_number}")
+                    break
+            else:
+                logger.error(
+                    f"Episode titled '{episode_title}' not found in season {season_number} of show ID {tmdb_id}, searching all seasons...")
+                # If not found in the specified season, search all seasons
+                tv_data = self.get_tv_show_details(tmdb_id)
+                for season in tv_data.get("seasons", []):
+                    season_num = season.get("season_number")
+                    season_data = self._make_request(f"tv/{tmdb_id}/season/{season_num}")
+                    episodes = season_data.get("episodes", [])
+                    for episode in episodes:
+                        if episode.get("name", "").lower() == episode_title.lower():
+                            episode_number = episode.get("episode_number")
+                            season_number = season_num
+                            logger.debug(f"Found episode '{episode_title}' as S{season_number}E{episode_number}")
+                            break
+                    else:
+                        continue
+                    break
         logger.debug(f"Getting episode details for show ID {tmdb_id}, S{season_number}E{episode_number}")
         return self._make_request(f"tv/{tmdb_id}/season/{season_number}/episode/{episode_number}")
 
@@ -174,8 +203,17 @@ class TMDbClient:
         )
         return result
 
-    def find_best_tv_match(self, title: str, year: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Find the best matching TV show for a given title and year."""
+    def find_best_tv_match(self, title: str, year: Optional[int] = None, use_episode_titles: bool = False) -> Optional[Dict[str, Any]]:
+        """Find the best matching TV show for a given title and year.
+
+        Args:
+            title: The TV show title to search for
+            year: Optional year of first air date
+            use_episode_titles: Whether to prioritize episode titles in matching (reserved for future use)
+
+        Returns:
+            The best matching TV show result or None if not found
+        """
         results = self.search_tv_show(title, year)
 
         if not results:
@@ -229,10 +267,14 @@ class TMDbClient:
         )
         return result
 
-    def get_episode_info(self, tmdb_id: int, season_number: int, episode_number: int) -> Optional[Dict[str, Any]]:
+    def get_episode_info(self, tmdb_id: int, season_number: int, episode_number: int, episode_title: Optional[str],
+                         use_episode_title: bool = False) -> Optional[Dict[str, Any]]:
         """Get episode information, returning None if not found."""
         try:
-            return self.get_tv_episode_details(tmdb_id, season_number, episode_number)
+            if use_episode_title:
+                return self.get_tv_episode_details(tmdb_id, season_number, episode_number, episode_title)
+            else:
+                return self.get_tv_episode_details(tmdb_id, season_number, episode_number)
         except TMDbAPIError as e:
             if "404" in str(e):
                 logger.debug(f"Episode S{season_number}E{episode_number} not found for show ID {tmdb_id}")

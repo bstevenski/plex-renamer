@@ -38,10 +38,11 @@ dev = [
 ]
 
 [project.scripts]
-plexifier = "plexifier:main"
+plex-rename = "rename_media_files:main"
+plex-transcode = "transcode_media_files:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/plexifier"]
+packages = ["src/common", "src/rename_utils", "src/transcode_utils"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/"]
@@ -61,24 +62,29 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=plexifier --cov-report=term-missing"
+addopts = "-v --cov=src --cov-report=term-missing"
 
 [tool.hatch.envs.default.scripts]
-standard-run = "PYTHONPATH=src python -m plexifier.plexifier"
-debug-run = "PYTHONPATH=src python -m plexifier.plexifier --dry-run --log-level DEBUG"
+# Media processing commands
+rename = "plex-rename"
+transcode = "plex-transcode"
+rename-debug = "plex-rename --dry-run --log-level DEBUG"
+transcode-debug = "plex-transcode --dry-run --log-level DEBUG"
+
+# Process management commands
 ps = """
-     pgrep -fl plexifier || echo 'No plexifier processes found';
+     pgrep -fl 'rename_media_files|transcode_media_files' || echo 'No media tool processes found';
      pgrep -fl ffmpeg || echo 'No ffmpeg processes found'
      """
 trail-log = """
-            ls -t .logs/plexifier.log 2>/dev/null |
+            ls -t .logs/ 2>/dev/null |
             head -1 | xargs tail -f 2>/dev/null ||
             echo 'No log files found'
             """
 kill = """
-       pkill -f plexifier;
+       pkill -f 'rename_media_files|transcode_media_files';
        pkill -f ffmpeg;
-       echo 'Killed plexifier and ffmpeg processes'
+       echo 'Killed media tool and ffmpeg processes'
        """
 clean-python = """
                rm -rf `find . -type d -name __pycache__` 2>/dev/null || true;
@@ -95,11 +101,16 @@ clean-logs = """
 clean-all = ['clean-python', 'clean-logs']
 help = """
         echo 'Available commands:'; echo
-        echo '   hatch run standard-run'; echo '      - Run plexifier in standard mode'; echo
-        echo '   hatch run debug-run'; echo '      - Run plexifier in debug/dry-run mode'; echo
-        echo '   hatch run ps'; echo '      - List running plexifier and ffmpeg processes'; echo
+        echo '   hatch run rename'; echo '      - Run media renamer in standard mode'; echo
+        echo '   hatch run transcode'; echo '      - Run media transcoder in standard mode'; echo
+        echo '   hatch run rename-debug'; echo '      - Run media renamer in debug/dry-run mode'; echo
+        echo '   hatch run transcode-debug'; echo '      - Run media transcoder in debug/dry-run mode'; echo
+        echo '   Console scripts (after pip install -e .):'; echo
+        echo '     plex-rename'; echo '        - Run media renamer directly'; echo
+        echo '     plex-transcode'; echo '     - Run media transcoder directly'; echo
+        echo '   hatch run ps'; echo '      - List running media tool and ffmpeg processes'; echo
         echo '   hatch run trail-log'; echo '      - Tail of latest log file'; echo
-        echo '   hatch run kill'; echo '      - Stop any running plexifier and ffmpeg processes'; echo
+        echo '   hatch run kill'; echo '      - Stop any running media tools and ffmpeg processes'; echo
         echo '   hatch run clean-python'; echo '      - Remove Python cache files and directories'; echo
         echo '   hatch run clean-logs'; echo '      - Remove old log files'; echo
         echo '   hatch run clean-all'; echo '      - Perform a full clean (Python cache + log files)'; echo

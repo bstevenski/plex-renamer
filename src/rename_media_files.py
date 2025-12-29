@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from common import (
     DEFAULT_LOG_LEVEL,
     LOG_DIR,
-    QUEUE_FOLDER,
+    MEDIA_BASE_FOLDER,
+    RENAME_FOLDER,
     CONTENT_TYPE_MOVIES,
     CONTENT_TYPE_TV,
     TRANSCODE_FOLDER,
@@ -47,10 +48,10 @@ class MediaRenamer:
     """Handles media file parsing, TMDb lookup, and file organization."""
 
     def __init__(
-        self,
-        dry_run: bool = False,
-        log_level: str = DEFAULT_LOG_LEVEL,
-        use_episode_titles: bool = False,
+            self,
+            dry_run: bool = False,
+            log_level: str = DEFAULT_LOG_LEVEL,
+            use_episode_titles: bool = False,
     ):
         """
         Initialize the Media Renamer.
@@ -58,7 +59,7 @@ class MediaRenamer:
         Args:
             dry_run: Preview changes without making modifications
             log_level: Logging level
-            use_episode_titles: Use episode titles instead of S##E## numbers for TV shows
+            use_episode_titles: Trust episode titles over S##E## numbers for TV shows during TMDb lookup
         """
         self.dry_run = dry_run
         self.log_level = log_level
@@ -98,7 +99,7 @@ class MediaRenamer:
         if source_dir:
             queue_dir = Path(source_dir).resolve()
         else:
-            queue_dir = Path(QUEUE_FOLDER).resolve()
+            queue_dir = Path(MEDIA_BASE_FOLDER) / RENAME_FOLDER
 
         self.logger.info(f"Starting media renaming from: {queue_dir}")
 
@@ -130,12 +131,18 @@ class MediaRenamer:
                     total_files_processed += 1
 
                     try:
-                        mp4_moved = self._process_file(filepath, content_type)
-                        if mp4_moved:
-                            mp4_files_moved += 1
+                        success = self._process_file(filepath, content_type)
+                        if success:
+                            # If processing succeeded, check what type of file it was
+                            # We need to track this differently since move success doesn't tell us file type
+                            extension = filepath.suffix.lower()
+                            if extension == ".mp4":
+                                mp4_files_moved += 1
+                            else:
+                                non_mp4_files_moved += 1
+                            total_files_successful += 1
                         else:
-                            non_mp4_files_moved += 1
-                        total_files_successful += 1
+                            total_files_failed += 1
 
                     except Exception as e:
                         self.logger.error(f"Failed to process file {filepath}: {e}")
@@ -148,23 +155,33 @@ class MediaRenamer:
             self.logger.error(f"Processing failed: {e}")
             raise
         finally:
-            self.logger.info(
-                f"Media renaming completed - "
-                f"Total: {total_files_processed}, "
-                f"Successful: {total_files_successful}, "
-                f"Failed: {total_files_failed}, "
-                f"MP4 files moved to upload: {mp4_files_moved}, "
-                f"Non-MP4 files moved to transcode: {non_mp4_files_moved}"
-            )
+            if self.dry_run:
+                self.logger.info(
+                    f"DRY RUN COMPLETE - "
+                    f"Total: {total_files_processed}, "
+                    f"Successful: {total_files_successful}, "
+                    f"Failed: {total_files_failed}, "
+                    f"MP4 files that would be moved to upload: {mp4_files_moved}, "
+                    f"Non-MP4 files that would be moved to transcode: {non_mp4_files_moved}"
+                )
+            else:
+                self.logger.info(
+                    f"Media renaming completed - "
+                    f"Total: {total_files_processed}, "
+                    f"Successful: {total_files_successful}, "
+                    f"Failed: {total_files_failed}, "
+                    f"MP4 files moved to upload: {mp4_files_moved}, "
+                    f"Non-MP4 files moved to transcode: {non_mp4_files_moved}"
+                )
 
     def _setup_directories(self) -> None:
         """Ensure all required directories exist."""
         directories = [
-            Path(TRANSCODE_FOLDER) / CONTENT_TYPE_MOVIES,
-            Path(TRANSCODE_FOLDER) / CONTENT_TYPE_TV,
-            Path(UPLOAD_FOLDER) / CONTENT_TYPE_MOVIES,
-            Path(UPLOAD_FOLDER) / CONTENT_TYPE_TV,
-            Path(ERROR_FOLDER),
+            Path(MEDIA_BASE_FOLDER, TRANSCODE_FOLDER) / CONTENT_TYPE_MOVIES,
+            Path(MEDIA_BASE_FOLDER, TRANSCODE_FOLDER) / CONTENT_TYPE_TV,
+            Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER) / CONTENT_TYPE_MOVIES,
+            Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER) / CONTENT_TYPE_TV,
+            Path(MEDIA_BASE_FOLDER, ERROR_FOLDER),
         ]
 
         for directory in directories:
@@ -185,8 +202,12 @@ class MediaRenamer:
             if not tmdb_data:
                 return self._handle_error(filepath, "TMDb lookup failed")
 
+            # Step 2.5: For TV shows, fetch the actual episode title from TMDb
+            if content_type == CONTENT_TYPE_TV:
+                self._fetch_episode_title_from_tmdb(media_info, tmdb_data)
+
             # Step 3: Format new filename and path
-            new_path = self._format_new_path(media_info, tmdb_data, self.use_episode_titles, filepath)
+            new_path = self._format_new_path(media_info, tmdb_data, filepath)
             self.logger.debug(f"New path: {new_path}")
 
             # Step 4: Move to appropriate destination based on file extension
@@ -202,7 +223,7 @@ class MediaRenamer:
             if media_info["content_type"] == CONTENT_TYPE_MOVIES:
                 result = self.tmdb_client.find_best_movie_match(media_info["title"], media_info["year"])
             else:  # TV Show
-                result = self.tmdb_client.find_best_tv_match(media_info["title"], media_info["year"])
+                result = self.tmdb_client.find_best_tv_match(media_info["title"], media_info["year"], self.use_episode_titles)
 
             if result:
                 # Use appropriate field name for movies vs TV shows
@@ -217,8 +238,40 @@ class MediaRenamer:
             self.logger.error(f"TMDb lookup failed: {e}")
             return None
 
+    def _fetch_episode_title_from_tmdb(self, media_info: dict, tmdb_data: dict) -> None:
+        """Fetch the actual episode title from TMDb and update media_info."""
+        try:
+            season = media_info.get("season")
+            episode = media_info.get("episode")
+            tmdb_id = tmdb_data.get("id")
+
+            if not all([season, episode, tmdb_id]):
+                self.logger.debug("Missing season/episode/tmdb_id, skipping TMDb episode title fetch")
+                return
+
+            # Fetch the episode details from TMDb
+            episode_data = self.tmdb_client.get_episode_info(
+                tmdb_id,
+                season,
+                episode,
+                episode_title=media_info.get("episode_title"),
+                use_episode_title=self.use_episode_titles
+            )
+
+            if episode_data and "name" in episode_data:
+                original_title = media_info.get("episode_title", "")
+                new_title = episode_data["name"]
+                media_info["episode_title"] = new_title
+                self.logger.info(f"Updated episode title from TMDb: '{original_title}' -> '{new_title}'")
+            else:
+                self.logger.debug(f"Could not fetch episode title for S{season}E{episode} from TMDb")
+
+        except Exception as e:
+            self.logger.debug(f"Failed to fetch episode title from TMDb: {e}")
+            # Don't fail the entire operation if we can't fetch the episode title
+
     @staticmethod
-    def _format_new_path(media_info: dict, tmdb_data: dict, use_episode_titles: bool, filepath: Path) -> Path:
+    def _format_new_path(media_info: dict, tmdb_data: dict, filepath: Path) -> Path:
         """Format the new path according to Plex conventions."""
         tmdb_id = tmdb_data["id"]
         extension = filepath.suffix
@@ -226,7 +279,6 @@ class MediaRenamer:
         if media_info["content_type"] == CONTENT_TYPE_MOVIES:
             # Destination will be determined by file extension
             new_path = construct_movie_path(
-                Path("temp"),  # Temporary base, will be replaced
                 tmdb_data["title"],
                 int(tmdb_data["release_date"][:4]) if tmdb_data.get("release_date") else media_info["year"],
                 tmdb_id,
@@ -235,15 +287,13 @@ class MediaRenamer:
         else:  # TV Show
             # Destination will be determined by file extension
             new_path = construct_tv_show_path(
-                Path("temp"),  # Temporary base, will be replaced
                 tmdb_data["name"],
                 int(tmdb_data["first_air_date"][:4]) if tmdb_data.get("first_air_date") else media_info["year"],
                 tmdb_id,
                 media_info["season"],
                 media_info["episode"],
                 media_info["episode_title"],
-                extension,
-                use_episode_titles,
+                extension
             )
 
         return new_path
@@ -255,30 +305,43 @@ class MediaRenamer:
 
         if is_mp4:
             # MP4 files go directly to upload folder
-            destination_dir = Path(UPLOAD_FOLDER) / content_type
+            destination_dir = Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER)
             self.logger.info(f"MP4 file detected, moving to upload folder: {destination_dir}")
         else:
             # Non-MP4 files go to transcode folder
-            destination_dir = Path(TRANSCODE_FOLDER) / content_type
+            destination_dir = Path(MEDIA_BASE_FOLDER, TRANSCODE_FOLDER)
             self.logger.info(f"Non-MP4 file detected, moving to transcode folder: {destination_dir}")
 
-        # Construct the full destination path
-        relative_path = new_path.relative_to("temp")
+        # Extract the relative path from new_path (remove the MEDIA_BASE_FOLDER prefix)
+        # new_path is like: ../media/Movies/Title (Year) {tmdb-id}/Title (Year) {tmdb-id}.ext
+        # We want: Movies/Title (Year) {tmdb-id}/Title (Year) {tmdb-id}.ext
+        new_path_str = str(new_path)
+        # Remove the leading ../media/ from the path
+        if new_path_str.startswith("../media/"):
+            relative_path = Path(new_path_str[9:])  # Skip "../media/"
+        elif new_path_str.startswith("../"):
+            relative_path = Path(new_path_str[3:])  # Skip "../"
+        else:
+            relative_path = new_path
+
+        # Construct the full destination path: transcode/Movies/Title/file.ext
         destination_path = destination_dir / relative_path
 
         if self.dry_run:
             self.logger.info(f"DRY RUN: Would move {source_path} to {destination_path}")
-            return is_mp4  # Return whether it was an MP4 file for stats
+            return True  # Dry run always "succeeds"
 
-        error_dir = create_error_directory(Path(ERROR_FOLDER), "renaming_errors")
+        error_dir = create_error_directory(Path(MEDIA_BASE_FOLDER, ERROR_FOLDER), "renaming_errors")
         success = safe_move_with_backup(source_path, destination_path, error_dir)
 
         if success:
-            self.logger.info(f"Successfully moved: {source_path.name} -> {relative_path}")
+            # Extract just the filename for logging
+            destination_relative = destination_path.relative_to(destination_dir)
+            self.logger.info(f"Successfully moved: {source_path.name} -> {destination_relative}")
         else:
             self.logger.error(f"Failed to move: {source_path.name}")
 
-        return is_mp4 if success else False
+        return success  # Return actual success status
 
     def _handle_error(self, filepath: Path, error_message: str) -> bool:
         """Handle processing errors by moving file to error directory."""
@@ -288,7 +351,7 @@ class MediaRenamer:
             self.logger.info(f"DRY RUN: Would move {filepath} to error directory")
             return False
 
-        error_dir = create_error_directory(Path(ERROR_FOLDER), "processing_errors")
+        error_dir = create_error_directory(Path(MEDIA_BASE_FOLDER, ERROR_FOLDER), "processing_errors")
         error_destination = error_dir / filepath.name
 
         try:

@@ -24,10 +24,11 @@ CONTENT_TYPE_TV = "TV Shows"
 
 # Folder name constants
 # All paths are relative to plex-media-tool directory where script is run
-QUEUE_FOLDER = "../media/ready-to-process"  # Input folder at same level as plex-media-tool
-ERROR_FOLDER = "../media/errored-files"  # Error files in .media folder at plex-media-tool level
-TRANSCODE_FOLDER = "../media/ready-to-transcode"  # Staging files in .media folder at plex-media-tool level
-UPLOAD_FOLDER = "../media/upload"  # Output folder at same level as plex-media-tool
+MEDIA_BASE_FOLDER = "../media"
+RENAME_FOLDER = "rename"
+ERROR_FOLDER = "errors"
+TRANSCODE_FOLDER = "transcode"
+UPLOAD_FOLDER = "upload"
 
 # Run settings
 DEBUG = False

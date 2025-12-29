@@ -16,6 +16,8 @@ import signal
 import sys
 from pathlib import Path
 
+from src import MEDIA_BASE_FOLDER
+
 # Add src directory to Python path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -96,7 +98,7 @@ class MediaTranscoder:
         if source_dir:
             transcode_dir = Path(source_dir).resolve()
         else:
-            transcode_dir = Path(TRANSCODE_FOLDER).resolve()
+            transcode_dir = Path(MEDIA_BASE_FOLDER, TRANSCODE_FOLDER)
 
         self.logger.info(f"Starting media transcoding from: {transcode_dir}")
 
@@ -152,21 +154,31 @@ class MediaTranscoder:
             self.logger.error(f"Processing failed: {e}")
             raise
         finally:
-            self.logger.info(
-                f"Media transcoding completed - "
-                f"Files attempted: {files_attempted}, "
-                f"Successfully moved: {files_moved_successfully}, "
-                f"Failed to move: {files_failed_to_move}, "
-                f"Actually transcoded: {files_actually_transcoded}, "
-                f"Didn't need transcoding: {files_that_didnt_need_transcoding}"
-            )
+            if self.dry_run:
+                self.logger.info(
+                    f"DRY RUN COMPLETE - "
+                    f"Files that would be attempted: {files_attempted}, "
+                    f"Files that would be successfully moved: {files_moved_successfully}, "
+                    f"Files that would fail to move: {files_failed_to_move}, "
+                    f"Files that would actually be transcoded: {files_actually_transcoded}, "
+                    f"Files that wouldn't need transcoding: {files_that_didnt_need_transcoding}"
+                )
+            else:
+                self.logger.info(
+                    f"Media transcoding completed - "
+                    f"Files attempted: {files_attempted}, "
+                    f"Successfully moved: {files_moved_successfully}, "
+                    f"Failed to move: {files_failed_to_move}, "
+                    f"Actually transcoded: {files_actually_transcoded}, "
+                    f"Didn't need transcoding: {files_that_didnt_need_transcoding}"
+                )
 
     def _setup_directories(self) -> None:
         """Ensure all required directories exist."""
         directories = [
-            Path(UPLOAD_FOLDER) / CONTENT_TYPE_MOVIES,
-            Path(UPLOAD_FOLDER) / CONTENT_TYPE_TV,
-            Path(ERROR_FOLDER),
+            Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER) / CONTENT_TYPE_MOVIES,
+            Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER) / CONTENT_TYPE_TV,
+            Path(MEDIA_BASE_FOLDER, ERROR_FOLDER),
         ]
 
         for directory in directories:
@@ -314,7 +326,7 @@ class MediaTranscoder:
             final_path = file_info["path"]
 
         content_type = file_info["content_type"]
-        upload_dir = Path(UPLOAD_FOLDER) / content_type
+        upload_dir = Path(MEDIA_BASE_FOLDER, UPLOAD_FOLDER) / content_type
 
         # Check if the file still exists
         if not final_path.exists():
@@ -324,7 +336,7 @@ class MediaTranscoder:
         # Construct destination path maintaining the directory structure
         try:
             # Try to get relative path from transcode folder
-            transcode_base = Path(TRANSCODE_FOLDER) / content_type
+            transcode_base = Path(MEDIA_BASE_FOLDER, TRANSCODE_FOLDER) / content_type
             relative_path = final_path.relative_to(transcode_base)
         except ValueError:
             # Fallback to just the filename

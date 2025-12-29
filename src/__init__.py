@@ -9,10 +9,6 @@ lookup, file renaming, and video transcoding.
 __version__ = "1.0.0"
 __author__ = "Bri Stevenski"
 
-# Main script entry points
-from .rename_media_files import main as rename_main
-from .transcode_media_files import main as transcode_main
-
 # Common utilities (for external use)
 from .common import (
     # Constants
@@ -21,7 +17,8 @@ from .common import (
     DEFAULT_LOG_LEVEL,
     ERROR_FOLDER,
     LOG_DIR,
-    QUEUE_FOLDER,
+    MEDIA_BASE_FOLDER,
+    RENAME_FOLDER,
     TRANSCODE_FOLDER,
     UPLOAD_FOLDER,
     VIDEO_EXTENSIONS,
@@ -33,7 +30,8 @@ from .common import (
     # Logging
     setup_logging,
 )
-
+# Main script entry points
+from .rename_media_files import main as rename_main
 # Rename utilities (for external use)
 from .rename_utils import (
     construct_movie_path,
@@ -41,7 +39,7 @@ from .rename_utils import (
     parse_media_file,
     TMDbClient,
 )
-
+from .transcode_media_files import main as transcode_main
 # Transcode utilities (for external use)
 from .transcode_utils import (
     VideoInfo,
@@ -63,7 +61,8 @@ __all__ = [
     "DEFAULT_LOG_LEVEL",
     "ERROR_FOLDER",
     "LOG_DIR",
-    "QUEUE_FOLDER",
+    "MEDIA_BASE_FOLDER",
+    "RENAME_FOLDER",
     "TRANSCODE_FOLDER",
     "UPLOAD_FOLDER",
     "VIDEO_EXTENSIONS",
