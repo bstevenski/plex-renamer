@@ -14,7 +14,7 @@ from typing import Dict, Optional, Set
 
 import ffmpeg
 
-from .constants import TRANSCODE_SETTINGS
+from common.constants import TRANSCODE_SETTINGS
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,9 @@ class VideoInfo:
 
     def _check_compatibility(self) -> None:
         """Check if the video is already compatible with target devices."""
+        # Check container format compatibility (must be MP4 for Plex)
+        container_compatible = self.filepath.suffix.lower() == ".mp4"
+
         # Check video codec compatibility
         video_compatible = self.video_codec in ["h264", "avc"]
 
@@ -140,7 +143,7 @@ class VideoInfo:
                 self.audio_channels is not None and self.audio_channels <= 2
         )
 
-        self.is_already_compatible = video_compatible and audio_compatible
+        self.is_already_compatible = container_compatible and video_compatible and audio_compatible
 
 
 def needs_transcoding(video_info: VideoInfo) -> bool:

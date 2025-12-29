@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Any
 
 import requests
 
-from .constants import TMDB_API_KEY, TMDB_BASE_URL
+from common.constants import TMDB_API_KEY, TMDB_BASE_URL
 
 logger = logging.getLogger(__name__)
 
